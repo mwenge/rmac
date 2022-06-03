@@ -1,7 +1,7 @@
 //
 // RMAC - Renamed Macro Assembler for all Atari computers
 // SYMBOL.C - Symbol Handling
-// Copyright (C) 199x Landon Dyer, 2011-2021 Reboot and Friends
+// Copyright (C) 199x Landon Dyer, 2011-2022 Reboot and Friends
 // RMAC derived from MADMAC v1.07 Written by Landon Dyer, 1986
 // Source utilised with the kind permission of Landon Dyer
 //
@@ -39,7 +39,6 @@ static uint8_t tdb_text[8] = {
 // Internal function prototypes
 static uint16_t WriteLODSection(int, uint16_t);
 
-
 //
 // Initialize symbol table
 //
@@ -55,7 +54,6 @@ void InitSymbolTable(void)
 	sdecltail = NULL;
 	currentUID = 0;
 }
-
 
 //
 // Hash the ASCII name and enviroment number
@@ -74,7 +72,6 @@ int HashSymbol(uint8_t * name, int envno)
 
 	return sum & (NBUCKETS - 1);
 }
-
 
 //
 // Make a new symbol of type 'type' in enviroment 'envno'
@@ -103,6 +100,9 @@ SYM * NewSymbol(uint8_t * name, int type, int envno)
 	symbol->sorder = NULL;
 	symbol->uid    = currentUID++;
 
+	// Record filename the symbol is defined (for now only used by macro error reporting)
+	symbol->cfileno = cfileno;
+
 	// Install symbol in the symbol table
 	int hash = HashSymbol(name, envno);
 	symbol->snext = symbolTable[hash];
@@ -117,7 +117,6 @@ SYM * NewSymbol(uint8_t * name, int type, int envno)
 	sordtail = symbol;
 	return symbol;
 }
-
 
 //
 // Look up the symbol name by its UID and return the pointer to the name.
@@ -143,7 +142,6 @@ uint8_t * GetSymbolNameByUID(uint32_t uid)
 	return NULL;
 }
 
-
 //
 // Lookup the symbol 'name', of the specified type, with the specified
 // enviroment level
@@ -168,7 +166,6 @@ SYM * lookup(uint8_t * name, int type, int envno)
 	return symbol;
 }
 
-
 //
 // Put symbol on "order-of-declaration" list of symbols
 //
@@ -192,7 +189,6 @@ void AddToSymbolDeclarationList(SYM * symbol)
 	sdecltail = symbol;
 }
 
-
 //
 // Make all referenced, undefined symbols global
 //
@@ -212,7 +208,6 @@ void ForceUndefinedSymbolsGlobal(void)
 	}
 }
 
-
 //
 // Assign numbers to symbols that are to be exported or imported. The symbol
 // number is put in 'senv'. Returns the number of symbols that will be in the
@@ -223,7 +218,7 @@ void ForceUndefinedSymbolsGlobal(void)
 //       count of the # of symbols in the symbol table, and the second is to
 //       actually create it.
 //
-uint32_t sy_assign(uint8_t * buf, uint8_t *(* construct)())
+uint32_t AssignSymbolNos(uint8_t * buf, uint8_t *(* construct)())
 {
 	uint16_t scount = 0;
 
@@ -240,10 +235,19 @@ uint32_t sy_assign(uint8_t * buf, uint8_t *(* construct)())
 	// them. We also pick which symbols should be global or not here.
 	for(SYM * sy=sdecl; sy!=NULL; sy=sy->sdecl)
 	{
+		// Skip non-labels
+		if (sy->stype != LABEL)
+			continue;
+
+		// Nuke equated register/CC symbols from orbit:
+		if (sy->sattre & (EQUATEDREG | UNDEF_EQUR | EQUATEDCC | UNDEF_CC))
+			continue;
+
 		// Export or import external references, and export COMMON blocks.
-		if ((sy->stype == LABEL)
-			&& ((sy->sattr & (GLOBAL | DEFINED)) == (GLOBAL | DEFINED)
-			|| (sy->sattr & (GLOBAL | REFERENCED)) == (GLOBAL | REFERENCED))
+		// N.B.: This says to mark the symbol as global if either 1) the symbol
+		//       is global AND the symbol is defined OR referenced, or 2) this
+		//       symbol is a common symbol.
+		if (((sy->sattr & GLOBAL) && (sy->sattr & (DEFINED | REFERENCED)))
 			|| (sy->sattr & COMMON))
 		{
 			sy->senv = scount++;
@@ -253,9 +257,11 @@ uint32_t sy_assign(uint8_t * buf, uint8_t *(* construct)())
 		}
 		// Export vanilla labels (but don't make them global). An exception is
 		// made for equates, which are not exported unless they are referenced.
-		else if (sy->stype == LABEL && lsym_flag
-			&& (sy->sattr & (DEFINED | REFERENCED)) != 0
-			&& (!as68_flag || *sy->sname != 'L'))
+		// ^^^ The above just might be bullshit. ^^^
+		// N.B.: This says if the symbol is either defined OR referenced (but
+		//       because of the above we know it *won't* be GLOBAL).  And
+		//       lsym_flag is always set true in Process() in rmac.c.
+		else if (lsym_flag && (sy->sattr & (DEFINED | REFERENCED)))
 		{
 			sy->senv = scount++;
 
@@ -267,27 +273,22 @@ uint32_t sy_assign(uint8_t * buf, uint8_t *(* construct)())
 	return scount;
 }
 
-
 //
-// Custom version of sy_assign for ELF .o files.
+// Custom version of AssignSymbolNos for ELF .o files.
 // The order that the symbols should be dumped is different.
 // (globals must be explicitly at the end of the table)
 //
-// N.B.: It should be possible to merge this with sy_assign, as there's nothing
-//       really ELF specific in here, other than the "globals go at the end of
-//       the queue" thing, which doesn't break the others. :-P
-uint32_t sy_assign_ELF(uint8_t * buf, uint8_t *(* construct)())
+// N.B.: It should be possible to merge this with AssignSymbolNos, as there's
+//       nothing really ELF specific in here, other than the "globals go at the
+//       end of the queue" thing, which doesn't break the others. :-P
+uint32_t AssignSymbolNosELF(uint8_t * buf, uint8_t *(* construct)())
 {
 	uint16_t scount = 0;
 
-//	if (construct == (uint8_t *(*)())constr_elfsymtab)
-//	if (buf == NULL)
-	{
-		// Append all symbols not appearing on the .sdecl list to the end of
-		// the .sdecl list
-		for(SYM * sy=sorder; sy!=NULL; sy=sy->sorder)
-			AddToSymbolDeclarationList(sy);
-	}
+	// Append all symbols not appearing on the .sdecl list to the end of
+	// the .sdecl list
+	for(SYM * sy=sorder; sy!=NULL; sy=sy->sorder)
+		AddToSymbolDeclarationList(sy);
 
 	// Run through all symbols (now on the .sdecl list) and assign numbers to
 	// them. We also pick which symbols should be global or not here.
@@ -298,7 +299,8 @@ uint32_t sy_assign_ELF(uint8_t * buf, uint8_t *(* construct)())
 		if (sy->stype == LABEL && lsym_flag
 			&& (sy->sattr & (DEFINED | REFERENCED)) != 0
 			&& (*sy->sname != '.')
-			&& (sy->sattr & GLOBAL) == 0)
+			&& (sy->sattr & GLOBAL) == 0
+			&& (sy->sattre & (EQUATEDREG | UNDEF_EQUR | EQUATEDCC | UNDEF_CC)) == 0)
 		{
 			sy->senv = scount++;
 
@@ -316,6 +318,7 @@ uint32_t sy_assign_ELF(uint8_t * buf, uint8_t *(* construct)())
 	for(SYM * sy=sdecl; sy!=NULL; sy=sy->sdecl)
 	{
 		if ((sy->stype == LABEL)
+			&& (sy->sattre & (EQUATEDREG | UNDEF_EQUR | EQUATEDCC | UNDEF_CC)) == 0
 			&& ((sy->sattr & (GLOBAL | DEFINED)) == (GLOBAL | DEFINED)
 			|| (sy->sattr & (GLOBAL | REFERENCED)) == (GLOBAL | REFERENCED))
 			|| (sy->sattr & COMMON))
@@ -325,16 +328,15 @@ uint32_t sy_assign_ELF(uint8_t * buf, uint8_t *(* construct)())
 			if (buf != NULL)
 				buf = construct(buf, sy, 1);
 		}
-		else if ((sy->sattr == (GLOBAL | REFERENCED)) &&  (buf != NULL))
+		else if ((sy->sattr == (GLOBAL | REFERENCED)) &&  (buf != NULL) && (sy->sattre & (EQUATEDREG | UNDEF_EQUR | EQUATEDCC | UNDEF_CC)) == 0)
 		{
-			buf = construct(buf, sy, 0);
+			buf = construct(buf, sy, 0); // <-- this creates a NON-global symbol...
 			scount++;
 		}
 	}
 
 	return scount;
 }
-
 
 //
 // Helper function for dsp_lod_symbols
@@ -359,7 +361,6 @@ static uint16_t WriteLODSection(int section, uint16_t symbolCount)
 	return symbolCount;
 }
 
-
 //
 // Dump LOD style symbols into the passed in buffer
 //
@@ -382,7 +383,6 @@ void DumpLODSymbols(void)
 	//WriteLODSection(M56001?, count);
 }
 
-
 //
 // Convert string to uppercase
 //
@@ -394,7 +394,6 @@ void ToUppercase(uint8_t * s)
 			*s -= 0x20;
 	}
 }
-
 
 //
 // Generate symbol table for listing file
@@ -548,4 +547,3 @@ int symtable(void)
 
 	return 0;
 }
-

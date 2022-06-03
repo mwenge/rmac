@@ -1,7 +1,7 @@
 //
 // RMAC - Renamed Macro Assembler for all Atari computers
 // SYMBOL.H - Symbol Handling
-// Copyright (C) 199x Landon Dyer, 2011-2021 Reboot and Friends
+// Copyright (C) 199x Landon Dyer, 2011-2022 Reboot and Friends
 // RMAC derived from MADMAC v1.07 Written by Landon Dyer, 1986
 // Source utilised with the kind permission of Landon Dyer
 //
@@ -35,6 +35,7 @@ SYM
 	uint8_t * sname;		// * -> Symbol's print-name
 	LLIST * lineList;		// * -> Macro's linked list of lines
 	LLIST * last;			// * -> end of macro linked list
+	uint16_t cfileno;		// File the macro is defined in
 	uint32_t uid;			// Symbol's unique ID
 };
 
@@ -49,8 +50,8 @@ SYM * NewSymbol(uint8_t *, int, int);
 void AddToSymbolDeclarationList(SYM *);
 void ForceUndefinedSymbolsGlobal(void);
 int symtable(void);
-uint32_t sy_assign(uint8_t *, uint8_t *(*)());
-uint32_t sy_assign_ELF(uint8_t *, uint8_t *(*)());
+uint32_t AssignSymbolNos(uint8_t *, uint8_t *(*)());
+uint32_t AssignSymbolNosELF(uint8_t *, uint8_t *(*)());
 void DumpLODSymbols(void);
 uint8_t * GetSymbolNameByUID(uint32_t);
 

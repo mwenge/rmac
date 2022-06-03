@@ -30,7 +30,7 @@
 #define TOKBUFSIZE      4096		// Size of token-line buffer
 #define QUANTUM         4096L		// # bytes to eat at a time from a file
 #define LNBUFSIZ        (QUANTUM*2)	// Size of file's buffer
-#define KWSIZE          7			// Maximum size of keyword in kwtab.h
+#define KWSIZE          10			// Maximum size of keyword in kwtab.h
 
 // (Normally) non-printable tokens
 #define COLON           ':'			// : (grumble: GNUmacs hates ':')
@@ -45,7 +45,7 @@
 #define DEQUALS         'g'			// ==
 #define SET             0x95		// Set
 #define REG             'R'			// Reg
-#define EQUREG          0x94		// equreg
+#define EQUREG          'U'			// equreg (must be synchronised with the equate in kw.tab)
 #define CCDEF           0xB7		// ccdef
 #define DCOLON          'h'			// ::
 #define GE              'i'			// >=
@@ -157,6 +157,14 @@ IREPT {
 	uint32_t lineno;		// Repeat line number (Convert this to global instead of putting it here?)
 };
 
+// File record, used to maintain a list of every include file ever visited
+#define FILEREC struct _filerec
+FILEREC
+{
+   FILEREC * frec_next;
+   char * frec_name;
+};
+
 // Exported variables
 extern int lnsave;
 extern uint32_t curlineno;
@@ -170,6 +178,7 @@ extern INOBJ * cur_inobj;
 extern int mjump_align;
 extern char * string[];
 extern int optimizeOff;
+extern FILEREC * filerec;
 
 // Exported functions
 int include(int, char *);
